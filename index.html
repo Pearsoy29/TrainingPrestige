@@ -133,6 +133,9 @@ textarea{width:100%;height:110px;font-size:12px;background:var(--bg);color:var(-
  <div class="card"><h2>Sauvegarde et réglages</h2>
   <div class="line"><button class="btn" id="bexpall">Exporter tout</button><button class="btn" id="bimp">Importer</button></div>
   <textarea id="bk" placeholder="L'export apparaît ici. Pour restaurer : colle ton texte ici, puis appuie sur Importer."></textarea>
+  <div class="line"><div id="cloud" class="meta" style="flex:1"></div></div>
+  <div class="line"><button class="btn p" id="cson" style="flex:1"></button><button class="btn" id="csnow" style="flex:1">Sauvegarder maintenant</button></div>
+  <div class="line"><input id="ccode" type="text" placeholder="Code de sauvegarde (pour restaurer)" autocapitalize="off" autocomplete="off"><button class="btn" id="crest">Restaurer</button></div>
   <div class="line"><input id="nm" type="text" placeholder="Ton prénom (pour les encouragements)" maxlength="30"></div>
   <div class="line"><button class="btn" id="rt" style="flex:1"></button></div>
   <div class="line"><button class="btn" id="sn" style="flex:1"></button></div></div>
@@ -198,7 +201,19 @@ const KEY="carnet-v1";
 let mem=null;
 function load(){try{const s=localStorage.getItem(KEY);if(s)return JSON.parse(s)}catch(e){}return mem||{unit:"lb",cur:{},hist:[]}}
 let S=load();S.cur=S.cur||{};S.hist=S.hist||[];S.notes=S.notes||{};S.body=S.body||[];if(!S.unit)S.unit="lb";
-function save(){mem=S;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function save(){mem=S;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}cloudSoon()}
+const SB="https://hfzypgtmyusipkjjzzul.supabase.co/rest/v1/rpc/",SK="sb_publishable_YxWiee2COGNcuHooVObrkQ_jM8n9BD8";
+let cT=null,cBusy=false;
+function cloudPayload(){return{v:2,unit:S.unit,name:S.name||"",hist:S.hist,notes:S.notes,body:S.body}}
+async function rpc(fn,body){const r=await fetch(SB+fn,{method:"POST",headers:{apikey:SK,"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok)throw new Error(r.status);const tx=await r.text();return tx?JSON.parse(tx):null}
+function cloudSoon(){if(!S.sync||!S.sync.code)return;clearTimeout(cT);cT=setTimeout(cloudPush,3000)}
+async function cloudPush(){if(!S.sync||!S.sync.code||cBusy)return;if(!navigator.onLine){S.sync.err="hors ligne";return}cBusy=true;
+ try{await rpc("put_backup",{c:S.sync.code,d:cloudPayload()});S.sync.at=Date.now();S.sync.err="";try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}catch(e){S.sync.err="échec ("+e.message+")"}
+ cBusy=false;if(typeof cloudInfo==="function")cloudInfo()}
+function cloudInfo(){const el=$("cloud"),b=$("cson");if(!el)return;const s=S.sync;
+ if(!s||!s.code){el.textContent="Sauvegarde en ligne désactivée.";b.textContent="Activer la sauvegarde en ligne";return}
+ el.innerHTML="Code : <b style=\"user-select:all;word-break:break-all\">"+esc(s.code)+"</b><br>"+(s.err?"⚠ Dernière sauvegarde : "+esc(s.err):s.at?"✅ Sauvegardé à "+new Date(s.at).toLocaleTimeString("fr-CA",{hour:"2-digit",minute:"2-digit"}):"En attente de la première sauvegarde")+"<br>Garde ce code précieusement : il permet de restaurer tes données.";
+ b.textContent="Désactiver (garder le code)"}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
 const r1=x=>Math.round(x*10)/10;
@@ -294,7 +309,7 @@ function renderHome(){
  $("hdays").innerHTML=DAYS.map((x,i)=>`<button data-hd="${i}">${x.name}</button>`).join("");
  $("wk").textContent=weekText();$("cal").innerHTML=calHTML();
  $("nm").value=S.name||"";$("sn").textContent="Son de fin de repos : "+(S.snd===false?"désactivé":"activé");$("rt").textContent="Lignes rouges : "+(S.red===false?"désactivées":"activées");
- renderHist();renderBody()}
+ renderHist();renderBody();cloudInfo()}
 function renderWork(){
  $("tabs").innerHTML=DAYS.map((d,i)=>`<button class="${i===day?"on":""}" data-d="${i}">${d.name}</button>`).join("");
  $("mlist").className=S.mode!=="focus"?"on":"";$("mfoc").className=S.mode==="focus"?"on":"";
@@ -314,7 +329,7 @@ function go(v){view=v;render();window.scrollTo(0,0)}
 function startSess(){S.last=Date.now();S.sday=day;if(!S.start)S.start=Date.now();save();tickSess()}
 function tickSess(){$("sv").textContent=S.start?fmt(Date.now()-S.start):"00:00";$("sb").textContent=S.start?"Réinitialiser":"Démarrer la séance";checkIdle()}
 function checkIdle(){const w=$("warn");if(S.start&&S.last&&Date.now()-S.last>IDLE&&view==="work"){w.style.display="block";$("wm").textContent="Inactif depuis "+Math.round((Date.now()-S.last)/60000)+" min. Termine ta séance pour l'enregistrer."}else w.style.display="none"}
-setInterval(tickSess,1000);document.addEventListener("visibilitychange",tickSess);
+setInterval(tickSess,1000);document.addEventListener("visibilitychange",()=>{tickSess();if(document.hidden&&S.sync&&S.sync.code){clearTimeout(cT);cloudPush()}});
 let tm=null;
 let AC=null;
 function audioInit(){try{if(S.snd===false)return;try{navigator.audioSession&&(navigator.audioSession.type="ambient")}catch(e){}AC=AC||new(window.AudioContext||window.webkitAudioContext)();AC.resume&&AC.resume()}catch(e){}}
@@ -395,6 +410,11 @@ document.addEventListener("click",e=>{
  else if(t.dataset.act==="wu"){const a=S.cur[day][t.dataset.i];a.unshift({w:"",r:"",done:false,wu:true});save();render()}
  else if(t.dataset.act==="rm"){const a=S.cur[day][t.dataset.i];const l=a[a.length-1];if(a.length<=1){toast("Il faut au moins une série")}else if(l.w!==""||l.r!==""){toast("Vide d'abord la dernière série")}else{a.pop();save();render()}}
  else if(t.id==="gcopy"){startSess();DAYS[day].ex.forEach((e2,i)=>copyW(i));save();render();toast("Poids repris — à toi de jouer")}
+ else if(t.id==="cson"){if(S.sync&&S.sync.code){S.sync.off=S.sync.code;delete S.sync.code;save();cloudInfo();toast("Sauvegarde désactivée")}else{const a=new Uint8Array(16);crypto.getRandomValues(a);const c=(S.sync&&S.sync.off)||[...a].map(x=>x.toString(16).padStart(2,"0")).join("");S.sync={code:c};save();cloudInfo();cloudPush();toast("Sauvegarde activée")}}
+ else if(t.id==="csnow"){if(!S.sync||!S.sync.code){toast("Active d'abord la sauvegarde");return}cloudPush().then(()=>toast(S.sync.err?"Échec : "+S.sync.err:"Sauvegardé ✅"))}
+ else if(t.id==="crest"){const c=$("ccode").value.trim();if(c.length<20){toast("Code invalide");return}
+  if(t.dataset.arm!=="1"){t.dataset.arm="1";t.textContent="Confirmer (remplace tout)";setTimeout(()=>{t.dataset.arm="";t.textContent="Restaurer"},5000);return}
+  t.dataset.arm="";t.textContent="Restaurer";rpc("get_backup",{c}).then(o=>{if(!o||!Array.isArray(o.hist)){toast("Aucune sauvegarde pour ce code");return}S.hist=o.hist;S.notes=o.notes||{};S.body=o.body||[];if(o.unit)S.unit=o.unit;if(o.name)S.name=o.name;S.sync={code:c,at:Date.now()};save();render();toast("Données restaurées ✅")}).catch(()=>toast("Échec de la restauration"))}
  else if(t.id==="rt"){S.red=S.red===false;save();render()}
  else if(t.id==="sn"){S.snd=S.snd===false;save();render()}
  else if(t.id==="badd"){const v=$("bw").value;if(v===""||isNaN(+v)||+v<=0){toast("Entre un poids valide");return}S.body.push({ts:Date.now(),date:new Date().toLocaleDateString("fr-CA"),w:+v,unit:S.unit});$("bw").value="";save();renderBody();toast("Poids ajouté")}
